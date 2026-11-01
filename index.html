@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Critter Quest</title>
+  <style>
+/* ---------- colors ---------- */
+:root{--bg:#f2f2f2;--fg:#222;--line:#555;--fill:#fff;--soft:#e3e3e3;--hl:#2a6df4}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#171717;--fg:#eee;--line:#999;--fill:#262626;--soft:#333;--hl:#6ea0ff}
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#111}
+body{background:#111;color:var(--fg);font:14px/1.4 system-ui,sans-serif}
+
+/* ---------- the screen (874 x 402, scaled to fit by the script) ---------- */
+.wrap{overflow:hidden;margin:0 auto}
+.stage{position:relative;width:874px;height:402px;
+  background:#888 center/100% 100% no-repeat;overflow:hidden;transform-origin:top left}
+
+/* ---------- clickable areas ---------- */
+.hs{position:absolute;border:0;background:transparent;padding:0;cursor:pointer;border-radius:8px;font:inherit}
+.hs:focus-visible{outline:3px solid var(--hl)}
+.hs:hover{background:rgba(255,255,255,.2)}
+
+/* ---------- Settings, Profile, Pause and other panel screens ---------- */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+.panel{position:absolute;left:180px;top:30px;width:514px;height:340px;background:var(--fill);color:var(--fg);
+  border:2px solid var(--line);border-radius:12px;padding:16px 20px;overflow:auto}
+.panel h2{margin:0 0 10px;font-size:20px}
+.panel p{margin:6px 0}
+.panel label{display:block;margin:10px 0}
+.panel input[type=range]{width:100%;accent-color:var(--hl)}
+.panel .status{font-size:12px;opacity:.75}
+.panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.panel button{padding:8px 16px;font:inherit;border:1.5px solid var(--line);background:var(--soft);
+  color:var(--fg);border-radius:6px;cursor:pointer}
+.panel button:hover,.panel button:focus-visible{outline:3px solid var(--hl)}
+.ph{border:1.5px dashed var(--line);background:var(--soft);border-radius:6px;height:190px;display:flex;
+  align-items:center;justify-content:center;font-size:13px}
+
+/* ---------- small message at the bottom ---------- */
+.toast{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);background:var(--fg);color:var(--bg);
+  padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90%}
+.toast.show{opacity:1}
+  </style>
+</head>
+<body>
+  <!-- the screen: the picture and the clickable areas are drawn here by the script -->
+  <div class="wrap" id="wrap"><div class="stage" id="stage"></div></div>
+
+  <!-- small message shown when a word or icon is tapped -->
+  <div class="toast" id="toast"></div>
+
+  <!-- background music: loops, starts automatically (or on the first tap if the browser blocks it) -->
+  <audio id="bgm" src="Kids_1.mp3" loop autoplay></audio>
+
+  <script>
+/* =====================================================================
+   SCREEN DATA
+   B(x, y, w, h, label, action)  = button or field
+   T(x, y, w, h, text)           = word, logo or art (shows its text when tapped)
+   x, y, w, h are pixels on an 874 x 402 canvas (half the size of the PNGs).
+   action: 'go:<screen id>' opens a screen, any other text is shown as a message.
+   ===================================================================== */
+const B = (x, y, w, h, l, a) => ({ x, y, w, h, l, a: a && a.startsWith('go:') ? a : 't:' + (a || l) });
+const T = (x, y, w, h, t) => ({ x, y, w, h, l: t, a: 't:' + t, k: 1 });
+const TAG = 'Be Kind · Be Aware · Be Safe';
+
+const S = {
+  welcome: { n: '1 Welcome', img: 'images/welcome.png', h: [
+    T(130, 28, 250, 138, 'Logo: Critter Quest'), T(130, 166, 230, 38, TAG),
+    T(145, 200, 100, 172, 'Hero character'), T(215, 250, 90, 125, 'Corgi'), T(805, 215, 60, 70, 'Signpost'),
+    B(525, 156, 222, 48, 'Log In', 'go:login'), B(525, 217, 222, 48, 'Create Account', 'go:create')]},
+
+  create: { n: '2 Create Account', img: 'images/create-account.png', h: [
+    B(148, 100, 462, 25, 'Email field'), B(148, 151, 462, 28, 'Password field'),
+    B(148, 203, 462, 28, 'Nickname field'), B(148, 255, 462, 28, 'Age dropdown'),
+    T(185, 14, 430, 42, 'Create Your Account'),
+    T(148, 88, 40, 34, 'Email icon'), T(148, 140, 40, 34, 'Password icon'),
+    T(148, 192, 40, 34, 'Player icon'), T(148, 245, 40, 34, 'Age icon'),
+    T(203, 81, 170, 16, 'Parent/Guardian Email'), T(203, 104, 140, 16, 'e.g. parent@email.com'),
+    T(203, 137, 60, 15, 'Password'), T(203, 158, 130, 16, 'At least 8 characters'),
+    B(573, 156, 28, 20, 'Eye icon', 'Show / hide password'),
+    T(203, 189, 110, 15, 'Player Nickname'), T(203, 211, 140, 16, 'e.g. StarFoxHero'),
+    T(203, 242, 25, 15, 'Age'), T(207, 263, 70, 16, 'Select age'),
+    B(155, 293, 28, 26, 'Checkbox', 'Agree to privacy policy'),
+    T(196, 290, 83, 14, 'I agree to the'), B(279, 290, 74, 14, 'privacy policy'),
+    T(354, 290, 134, 14, 'and allow my child'), T(196, 305, 150, 14, 'to play Critter Quest.'),
+    T(688, 88, 115, 85, "Let's explore and learn!"), T(672, 180, 130, 140, 'Corgi mascot'),
+    B(150, 325, 195, 46, 'Back', 'go:welcome'), B(365, 325, 245, 46, 'Create Account', 'go:hero')]},
+
+  login: { n: '3 Log In', img: 'images/login.png', h: [
+    T(120, 28, 250, 132, 'Logo: Critter Quest'), T(125, 160, 235, 38, TAG),
+    T(105, 190, 100, 190, 'Hero character'), T(190, 255, 100, 125, 'Corgi'),
+    B(534, 140, 254, 36, 'Username field'), B(534, 193, 254, 36, 'Password field'),
+    T(544, 146, 24, 22, 'User icon'), T(571, 149, 62, 16, 'Username'),
+    T(544, 199, 24, 22, 'Lock icon'), T(571, 202, 62, 16, 'Password'),
+    B(533, 240, 258, 55, 'Log In', 'go:menu')]},
+
+  hero: { n: '5 Choose Hero', img: 'images/choose-hero.png', h: [
+    T(248, 30, 385, 62, 'Choose Your Hero'), T(210, 101, 176, 177, 'Hero preview'),
+    ...[0, 1, 2, 3, 4, 5].map(i => B([415, 499, 585][i % 3], i > 2 ? 178 : 101, 74, 70, 'Hero ' + (i + 1), 'Hero ' + (i + 1) + ' selected')),
+    T(207, 266, 78, 16, 'Hair Color'),
+    ...[0, 1, 2, 3, 4, 5].map(i => B(207 + i * 31, 291, 26, 26, 'Hair ' + (i + 1), 'Hair color ' + (i + 1))),
+    T(426, 266, 92, 16, 'Outfit Color'),
+    ...[0, 1, 2, 3, 4, 5].map(i => B(428 + i * 38, 291, 26, 26, 'Outfit ' + (i + 1), 'Outfit color ' + (i + 1))),
+    B(320, 337, 235, 50, 'Continue', 'go:menu')]},
+
+  menu: { n: '4 Main Menu', img: 'images/main-menu.png', h: [
+    T(295, 8, 285, 142, 'Logo: Critter Quest'), T(305, 148, 275, 32, TAG),
+    T(140, 188, 85, 192, 'Hero character'), T(205, 255, 85, 125, 'Corgi'), T(812, 228, 58, 52, 'Paw sign'),
+    B(818, 6, 50, 50, 'Star badge', 'Star badge / achievements'),
+    B(371, 188, 214, 42, 'Play', 'go:game'), B(371, 234, 214, 42, 'Animal Book', 'go:book'),
+    B(371, 280, 214, 42, 'Settings', 'go:settings'), B(371, 328, 214, 44, 'Profile', 'go:profile')]},
+
+  game: { n: '6 Game Map', img: 'images/game-map.png', h: [
+    B(5, 4, 67, 68, 'PIC', 'Player picture'), B(76, 16, 112, 32, 'LIFE', 'Life meter'),
+    B(700, 10, 98, 40, 'BADGE', 'Badges'), B(817, 8, 50, 50, 'Pause', 'go:pause'),
+    B(222, 102, 106, 34, 'HOUSE', 'go:loc_house'), B(618, 66, 155, 42, 'School', 'go:loc_school'),
+    B(678, 204, 92, 34, 'Farm', 'go:loc_farm'), B(678, 290, 106, 36, 'Rice Field', 'go:loc_rice'),
+    T(305, 162, 50, 72, 'Player hero'), T(343, 200, 40, 36, 'Corgi'),
+    T(470, 118, 112, 60, 'Upper bridge'), T(472, 252, 112, 50, 'Lower bridge'),
+    B(19, 294, 112, 108, 'CONTROLLER', 'Movement controller'),
+    B(721, 332, 68, 68, 'Animal Book', 'go:book'), B(795, 332, 68, 68, 'Setting Icon', 'go:settings')]}
+};
+
+/* Screens that have no artwork yet: [title, background picture].
+   'settings' and 'profile' get real controls (volume etc.), the rest show a placeholder. */
+const ST = {
+  settings:   ['Settings',    'images/main-menu.png'],
+  profile:    ['Profile',     'images/main-menu.png'],
+  book:       ['Animal Book', 'images/main-menu.png'],
+  pause:      ['Paused',      'images/game-map.png'],
+  loc_house:  ['House',       'images/game-map.png'],
+  loc_school: ['School',      'images/game-map.png'],
+  loc_farm:   ['Farm',        'images/game-map.png'],
+  loc_rice:   ['Rice Field',  'images/game-map.png']
+};
+
+/* =====================================================================
+   MUSIC AND VOLUME  (one shared state, used by Settings and Profile)
+   ===================================================================== */
+const bgm = document.getElementById('bgm');
+let vol   = Number(localStorage.getItem('vol') ?? 60);      // 0 - 100, remembered
+let on    = localStorage.getItem('music') !== 'off';        // music on/off, remembered
+let muted = false;
+
+function applyAudio() {
+  bgm.volume = vol / 100;
+  bgm.muted  = muted;
+  if (on) bgm.play().catch(() => {});      // the browser may block this until the first tap
+  else bgm.pause();
+  localStorage.setItem('vol', vol);
+  localStorage.setItem('music', on ? 'on' : 'off');
+  showAudioState();
+}
+
+// refresh any music controls currently on screen
+function showAudioState() {
+  let s = 'Playing';
+  if (bgm.error)        s = 'Music file not found – put Kids_1.mp3 in the same folder as index.html';
+  else if (!on)         s = 'Music is off';
+  else if (bgm.paused)  s = 'Tap anywhere on the page to start the music';
+  document.querySelectorAll('.vol').forEach(r => r.value = vol);
+  document.querySelectorAll('.pct').forEach(x => x.textContent = vol + '%');
+  document.querySelectorAll('.tog').forEach(b => b.textContent = 'Music: ' + (on ? 'On' : 'Off'));
+  document.querySelectorAll('.mute').forEach(b => b.textContent = muted ? 'Unmute' : 'Mute');
+  document.querySelectorAll('.status').forEach(x => x.textContent = s);
+}
+['playing', 'pause', 'error'].forEach(ev => bgm.addEventListener(ev, showAudioState));
+bgm.addEventListener('error', () => toast('Music file not found: Kids_1.mp3'));
+
+// Browsers block sound until the person touches the page,
+// so keep trying on every tap / key press until the music is really playing.
+function startOnTouch() { if (on && bgm.paused && !bgm.error) bgm.play().catch(() => {}); }
+['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, startOnTouch));
+
+/* =====================================================================
+   APP LOGIC
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+let cur = 'welcome', hist = [];
+const picks = {};                                           // hero / hair / outfit chosen on the hero screen
+
+function toast(m) {
+  const t = $('toast');
+  t.textContent = m; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1600);
+}
+function go(id)  { if (id !== cur) hist.push(cur); cur = id; render(); }
+function back()  { cur = hist.pop() || 'menu'; render(); }
+
+function act(a) {
+  if (a.startsWith('go:')) return go(a.slice(3));
+  const m = a.slice(2);
+  const p = m.match(/^(Hero|Hair color|Outfit color) (\d)/);   // remember the hero choices for the Profile screen
+  if (p) picks[p[1].split(' ')[0]] = p[2];
+  toast(m);
+}
+
+const audioHTML = `
+  <label>Music volume <b class="pct"></b><input type="range" class="vol" min="0" max="100"></label>
+  <div class="row"><button class="tog"></button><button class="mute"></button></div>
+  <p class="status"></p>`;
+
+function panelHTML() {
+  const [title] = ST[cur];
+  if (cur === 'settings') return `<h2>${title}</h2>${audioHTML}<div class="row"><button data-back>Back</button></div>`;
+  if (cur === 'profile')
+    return `<h2>${title}</h2>
+      <p>Hero: <b>${picks.Hero || '-'}</b> &nbsp; Hair color: <b>${picks.Hair || '-'}</b> &nbsp; Outfit color: <b>${picks.Outfit || '-'}</b></p>
+      ${audioHTML}<div class="row"><button data-back>Back</button></div>`;
+  if (cur === 'pause')
+    return `<h2>${title}</h2><div class="row"><button data-back>Resume</button><button data-go="menu">Quit to Menu</button><button data-go="settings">Settings</button></div>`;
+  return `<h2>${title}</h2><div class="ph">Content placeholder – design not provided</div><div class="row"><button data-back>Back</button></div>`;
+}
+
+function render() {
+  const st = $('stage');
+  st.innerHTML = '';
+
+  if (S[cur]) {                                              // screens with artwork
+    st.style.backgroundImage = `url(${S[cur].img})`;
+    S[cur].h.forEach(h => {
+      const b = document.createElement('button');
+      b.className = 'hs' + (h.k ? ' x' : '');
+      b.dataset.l = h.l; b.setAttribute('aria-label', h.l);
+      Object.assign(b.style, { left: h.x + 'px', top: h.y + 'px', width: h.w + 'px', height: h.h + 'px' });
+      b.onclick = () => act(h.a);
+      st.appendChild(b);
+    });
+  } else {                                                   // panel screens
+    st.style.backgroundImage = `url(${ST[cur][1]})`;
+    st.insertAdjacentHTML('beforeend', '<div class="dim"></div>');
+    const p = document.createElement('div');
+    p.className = 'panel';
+    p.innerHTML = panelHTML();
+    p.querySelectorAll('[data-back]').forEach(b => b.onclick = back);
+    p.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+    p.querySelectorAll('.vol').forEach(r => r.oninput = () => { vol = Number(r.value); applyAudio(); });
+    p.querySelectorAll('.tog').forEach(b => b.onclick = () => { on = !on; applyAudio(); });
+    p.querySelectorAll('.mute').forEach(b => b.onclick = () => { muted = !muted; applyAudio(); });
+    st.appendChild(p);
+    applyAudio();                                            // fill in the control values
+  }
+
+  fit();
+}
+
+// scale the 874 x 402 screen to the width of the device
+function fit() {
+  const sc = Math.min(1, innerWidth / 874);
+  $('stage').style.transform = `scale(${sc})`;
+  $('wrap').style.width  = (874 * sc) + 'px';
+  $('wrap').style.height = (402 * sc) + 'px';
+}
+
+addEventListener('resize', fit);
+
+applyAudio();
+render();
+  </script>
+</body>
+</html>
